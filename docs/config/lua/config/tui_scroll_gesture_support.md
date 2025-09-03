@@ -4,7 +4,7 @@ tags:
 ---
 # `tui_scroll_gesture_support = true`
 
-{{since('2025xxxx-xxxxx-xxxxx')}}
+{{since('nightly', outline=true)}}
 
 When using terminal user interface (TUI) applications such as `tmux`, `vim`,
 `nvim` or `emacs` that enable mouse reporting, wezterm forwards scroll wheel

@@ -4,7 +4,7 @@ tags:
 ---
 # `precise_scroll_scale = 15.0`
 
-{{since('2025xxxx-xxxxx-xxxxx')}}
+{{since('nightly', outline=true)}}
 
 Some devices, such as the Apple Magic Mouse and trackpads, provide *precise*
 scrolling deltas measured in pixels. Since wezterm doesn’t know the exact pixel
