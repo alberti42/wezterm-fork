@@ -1358,8 +1358,6 @@ impl WindowInner {
 /// Resolves conflicting decoration flags to produce a compatible set.
 ///
 /// Invariants after this function:
-/// - If INTEGRATED_BUTTONS is present, MACOS_DISABLE_TITLEBAR_DRAG is absent.
-/// - If TITLE is present, MACOS_DISABLE_TITLEBAR_DRAG is absent.
 /// - If integrated_title_button_style != MacOsNative, INTEGRATED_BUTTONS is absent.
 fn resolve_compatible_decorations(
     mut decorations: WindowDecorations,
@@ -1370,18 +1368,40 @@ fn resolve_compatible_decorations(
         decorations.remove(WindowDecorations::INTEGRATED_BUTTONS);
     }
 
-    // INTEGRATED_BUTTONS needs a draggable title area
+    // If we draw integrated buttons, we want the title hidden regardless of TITLE.
+    // (This makes `TITLE | INTEGRATED_BUTTONS` -> "no title", as per the matrix.)
     if decorations.contains(WindowDecorations::INTEGRATED_BUTTONS) {
-        decorations.remove(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG);
+        decorations.remove(WindowDecorations::TITLE);
     }
 
-    // Showing a TITLE implies the title area is draggable; drop the "disable dragging" flag
-    if decorations.contains(WindowDecorations::TITLE) {
-        decorations.remove(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG);
+    if decorations.contains(WindowDecorations::MACOS_FORCE_SQUARE_CORNERS) {
+        // Square corners => untitled, no titlebar theming, and no integrated buttons
+        // 
+        // If the window is untitled (no NSTitledWindowMask), the standard traffic-light buttons
+        // aren’t there, so keeping INTEGRATED_BUTTONS would be inconsistent. Removing it during
+        // normalization is the cleanest approach.
+        decorations.remove(
+            WindowDecorations::TITLE
+                | WindowDecorations::MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR
+                | WindowDecorations::INTEGRATED_BUTTONS, // <-- important
+        );
+        // Note: we intentionally DO NOT remove RESIZE (resizing stays additive).
     }
 
     decorations
 }
+
+// Sanity matrix (what the code is supposed to do):
+//
+// NONE → titled, not resizable, full-size (hidden title path), buttons hidden.
+// TITLE → titled, not resizable, no full-size.
+// RESIZE → titled, resizable, full-size (hidden title).
+// INTEGRATED_BUTTONS → titled, not resizable, full-size.
+// TITLE | INTEGRATED_BUTTONS → not resizable, integrated buttons, untitled (TITLE removed in normalization), full-size.
+// MACOS_FORCE_SQUARE_CORNERS → untitled, not resizable, full-size.
+// MACOS_FORCE_SQUARE_CORNERS | RESIZE → untitled, resizable, full-size.
+// MACOS_FORCE_SQUARE_CORNERS | TITLE → untitled (TITLE removed in normalization), full-size.
+// MACOS_FORCE_SQUARE_CORNERS | INTEGRATED_BUTTONS → untitled, not resizable, no integrated buttons, full-size.
 
 fn apply_decorations_to_window(
     window: &StrongPtr,
@@ -1450,21 +1470,7 @@ fn from_normalized_decoration_to_mask(
         WindowDecorations::MACOS_FORCE_DISABLE_SHADOW
             | WindowDecorations::MACOS_FORCE_ENABLE_SHADOW,
     );
-
-    // A couple of debug checks to assert the invariants
-    // if someone passes to this function non-normalized flags by mistake later
-    // before invoking resolve_compatible_decorations(...)
-    debug_assert!(
-	    !(decorations.contains(WindowDecorations::TITLE)
-	      && decorations.contains(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG)),
-	    "TITLE cannot coexist with MACOS_DISABLE_TITLEBAR_DRAG (normalize first)"
-	);
-	debug_assert!(
-	    !(decorations.contains(WindowDecorations::INTEGRATED_BUTTONS)
-	      && decorations.contains(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG)),
-	    "INTEGRATED_BUTTONS disables MACOS_DISABLE_TITLEBAR_DRAG (normalize first)"
-	);
-
+	
     // Start from "common-sense defaults" that wezterm historically relies on:
     // titled (so the window can be key), closable & miniaturizable.
     //
@@ -1491,52 +1497,37 @@ fn from_normalized_decoration_to_mask(
         mask |= NSWindowStyleMask::NSResizableWindowMask;
     }
 
-    // Hidden title
+    // When MACOS_FORCE_SQUARE_CORNERS is set, we omit NSTitledWindowMask
+    let has_square_corners =
+        decorations.contains(WindowDecorations::MACOS_FORCE_SQUARE_CORNERS);
+
+    if has_square_corners {
+    	// This effectively removes the ability to drag the window.
+    	// If we want drag back, we need a custom draggable region.
+        mask &= !NSWindowStyleMask::NSTitledWindowMask;
+    }
+
+     // Hidden title
     let hidden_title = !decorations.contains(WindowDecorations::TITLE);
 
     // Integrated buttons
     let has_integrated_buttons = decorations.contains(WindowDecorations::INTEGRATED_BUTTONS);
             
-    if hidden_title || has_integrated_buttons {
+    if has_square_corners || hidden_title || has_integrated_buttons {
     	// When the title is hidden, we apply NSFullSizeContentViewWindowMask which
-    	// effectively allows interaction with the title region for drag operations,
-    	// even if the title region is hidden. However, if the user provides
-    	// MACOS_DISABLE_TITLEBAR_DRAG, we omit the mask, resulting in the
-        // content displayed over the entire window, but disabling interactions with 
-        // the title bar region for drag operations.
+    	// effectively allows using the title bar region to display the terminal content
+    	// However, interactions with the title region lead to drag operations,
+    	// even if the title region is hidden, and prevent selecting text in the first line.
 
         // When INTEGRATED_BUTTONS is provided, it is necessary to apply
         // NSFullSizeContentViewWindowMask because otherwise the integrated buttons
         // would appear outside of the content view.
 
-        // Note that MACOS_DISABLE_TITLEBAR_DRAG can only be provided
-        // when TITLE is not provided. Moreover, INTEGRATED_BUTTONS disables 
-        // MACOS_DISABLE_TITLEBAR_DRAG. Both mechanisms are ensured by
-        // resolve_compatible_decorations(...)
-    	let enable_title_area_for_dragging =
-    		!decorations.contains(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG);
+        // When MACOS_FORCE_SQUARE_CORNERS is provided, NSTitledWindowMask is unset,
+        // meaning that the window is without title (not just with hidden title, but
+        // really without title)
 
-    	if enable_title_area_for_dragging {
-    		mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;	
-    	}
-    }
-
-    // When only MACOS_FORCE_SQUARE_CORNERS is set (and neither TITLE/RESIZE/INTEGRATED_BUTTONS),
-    // prior code omitted NSTitledWindowMask. Preserve that here by *not* adding it in this case.
-    // (We started with Titled above, so undo it if we match this exact shape.)
-    let only_square_corners =
-        decorations.contains(WindowDecorations::MACOS_FORCE_SQUARE_CORNERS)
-            && !decorations.intersects(
-                WindowDecorations::TITLE
-                    | WindowDecorations::RESIZE
-                    | WindowDecorations::INTEGRATED_BUTTONS,
-            );
-
-    if only_square_corners {
-        // Rebuild mask without NSTitledWindowMask; keep whatever we already added above
-        mask = (mask & !NSWindowStyleMask::NSTitledWindowMask)
-            | NSWindowStyleMask::NSClosableWindowMask
-            | NSWindowStyleMask::NSMiniaturizableWindowMask;
+    	mask |= NSWindowStyleMask::NSFullSizeContentViewWindowMask;	
     }
 
     mask
