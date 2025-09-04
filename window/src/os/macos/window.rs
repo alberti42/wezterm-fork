@@ -503,7 +503,7 @@ impl Window {
                 ime_text: String::new(),
             }));
 
-            let window: id = msg_send![get_window_class(), alloc];
+            let window: id = msg_send![get_wezterm_window_class(), alloc];
             let window = StrongPtr::new(NSWindow::initWithContentRect_styleMask_backing_defer_(
                 window,
                 rect,
@@ -1355,10 +1355,13 @@ impl WindowInner {
     }
 }
 
-/// Resolves conflicting decoration flags to produce a compatible set.
-///
-/// Invariants after this function:
-/// - If integrated_title_button_style != MacOsNative, INTEGRATED_BUTTONS is absent.
+// Resolves conflicting decoration flags to produce a compatible set.
+//
+// Invariants after this function:
+// - If integrated_title_button_style != MacOsNative, INTEGRATED_BUTTONS is absent.
+// - If INTEGRATED_BUTTONS is present, TITLE is absent
+// - If MACOS_FORCE_SQUARE_CORNERS is present, TITLE & MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR & INTEGRATED_BUTTONS are absent
+// - If TITLE is present, MACOS_DISABLE_TITLEBAR_DRAG is absent.
 fn resolve_compatible_decorations(
     mut decorations: WindowDecorations,
     integrated_title_button_style: IntegratedTitleButtonStyle,
@@ -1369,7 +1372,7 @@ fn resolve_compatible_decorations(
     }
 
     // If we draw integrated buttons, we want the title hidden regardless of TITLE.
-    // (This makes `TITLE | INTEGRATED_BUTTONS` -> "no title", as per the matrix.)
+    // This makes `TITLE | INTEGRATED_BUTTONS` -> "no title", as per the matrix.
     if decorations.contains(WindowDecorations::INTEGRATED_BUTTONS) {
         decorations.remove(WindowDecorations::TITLE);
     }
@@ -1388,6 +1391,10 @@ fn resolve_compatible_decorations(
         // Note: we intentionally DO NOT remove RESIZE (resizing stays additive).
     }
 
+    if decorations.contains(WindowDecorations::TITLE) {
+    	decorations.remove(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG);
+    }
+
     decorations
 }
 
@@ -1398,6 +1405,8 @@ fn resolve_compatible_decorations(
 // RESIZE → titled, resizable, full-size (hidden title).
 // INTEGRATED_BUTTONS → titled, not resizable, full-size.
 // TITLE | INTEGRATED_BUTTONS → not resizable, integrated buttons, untitled (TITLE removed in normalization), full-size.
+// TITLE | MACOS_DISABLE_TITLEBAR_DRAG → → titled, not resizable, no full-size (MACOS_DISABLE_TITLEBAR_DRAG removed in normalization)
+// MACOS_DISABLE_TITLEBAR_DRAG → no dragging by title bar 
 // MACOS_FORCE_SQUARE_CORNERS → untitled, not resizable, full-size.
 // MACOS_FORCE_SQUARE_CORNERS | RESIZE → untitled, resizable, full-size.
 // MACOS_FORCE_SQUARE_CORNERS | TITLE → untitled (TITLE removed in normalization), full-size.
@@ -1966,7 +1975,7 @@ fn key_modifiers(flags: NSEventModifierFlags) -> Modifiers {
 /// canBecomeKeyWindow so that our simple fullscreen style can keep
 /// focus once the titlebar has been removed; the default behavior of
 /// NSWindow is to reject focus when it doesn't have a titlebar!
-fn get_window_class() -> &'static Class {
+fn get_wezterm_window_class() -> &'static Class {
     Class::get(WINDOW_CLS_NAME).unwrap_or_else(|| {
         let mut cls = ClassDecl::new(WINDOW_CLS_NAME, class!(NSWindow))
             .expect("Unable to register Window class");
@@ -2427,6 +2436,23 @@ impl WindowView {
     extern "C" fn mouse_down(this: &mut Object, _sel: Sel, nsevent: id) {
         Self::mouse_common(this, nsevent, MouseEventKind::Press(MousePress::Left));
     }
+
+    extern "C" fn mouse_down_can_move_window(this: &Object, _: Sel) -> BOOL {
+	    // Log every time the function is triggered
+	    if let Some(myself) = Self::get_this(this) {
+	        let inner = myself.inner.borrow();
+	        let should_disable_drag = inner
+	            .config
+	            .window_decorations
+	            .contains(WindowDecorations::MACOS_DISABLE_TITLEBAR_DRAG);
+
+	        if should_disable_drag {
+	            return NO;
+	        }
+	    }
+	    YES
+	}
+
     extern "C" fn right_mouse_up(this: &mut Object, _sel: Sel, nsevent: id) {
         Self::mouse_common(this, nsevent, MouseEventKind::Release(MousePress::Right));
     }
@@ -3250,10 +3276,10 @@ impl WindowView {
     }
 
     fn get_class() -> &'static Class {
-        Class::get(VIEW_CLS_NAME).unwrap_or_else(Self::define_class)
+        Class::get(VIEW_CLS_NAME).unwrap_or_else(Self::get_wezterm_view_class)
     }
 
-    fn define_class() -> &'static Class {
+    fn get_wezterm_view_class() -> &'static Class {
         let mut cls = ClassDecl::new(VIEW_CLS_NAME, class!(NSView))
             .expect("Unable to register WindowView class");
 
@@ -3265,6 +3291,11 @@ impl WindowView {
         cls.add_protocol(Protocol::get("CALayerDelegate").expect("CALayerDelegate not defined"));
 
         unsafe {
+        	cls.add_method(
+	            sel!(mouseDownCanMoveWindow),
+	            Self::mouse_down_can_move_window as extern "C" fn(&Object, Sel) -> BOOL,
+	        );
+
             cls.add_method(
                 sel!(dealloc),
                 WindowView::dealloc as extern "C" fn(&mut Object, Sel),
