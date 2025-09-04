@@ -19,7 +19,7 @@ use cocoa::appkit::{
     self, CGFloat, NSApplication, NSApplicationActivateIgnoringOtherApps,
     NSApplicationPresentationOptions, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags,
     NSOpenGLContext, NSOpenGLPixelFormat, NSPasteboard, NSRunningApplication, NSScreen, NSView,
-    NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowStyleMask,
+    NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowStyleMask, NSWindowButton
 };
 use cocoa::base::*;
 use cocoa::foundation::{
@@ -920,9 +920,45 @@ impl WindowOps for Window {
             None
         };
 
+		let title_bar_padding_left = if config
+	        .window_decorations
+	        .contains(WindowDecorations::INTEGRATED_BUTTONS)
+	    {
+	        // This unsafe block calls the native macOS APIs
+	        unsafe {
+	            let window_id: id = self.ns_window;
+
+	            // 1. Get each of the three "traffic light" buttons
+	            let close_button: id =
+	                msg_send![window_id, standardWindowButton: NSWindowButton::NSWindowCloseButton];
+	            let zoom_button: id =
+	                msg_send![window_id, standardWindowButton: NSWindowButton::NSWindowZoomButton];
+
+	            // 2. If we can't find the buttons (eg: fullscreen), fall back to a safe value.
+	            if close_button == nil || zoom_button == nil {
+	                64.0 // Fallback value
+	            } else {
+	                // 3. Get the frame (position and size) of the leftmost and rightmost buttons.
+	                let close_frame: NSRect = msg_send![close_button, frame];
+	                let zoom_frame: NSRect = msg_send![zoom_button, frame];
+
+	                // 4. The total width is the right edge of the rightmost button
+	                //    minus the left edge of the leftmost button.
+	                let right_edge = zoom_frame.origin.x + zoom_frame.size.width;
+	                let left_edge = close_frame.origin.x;
+	                let total_width = right_edge - left_edge;
+
+	                // 5. Add a few extra pixels for padding between the buttons and the content.
+	                (total_width as f32) + 10.0
+	            }
+	        }
+	    } else {
+	        0.0
+	    };
+
         Ok(Some(Parameters {
             title_bar: TitleBar {
-                padding_left: ULength::new(0),
+                padding_left: ULength::new(title_bar_padding_left as usize),
                 padding_right: ULength::new(0),
                 height: None,
                 font_and_size: None,
