@@ -939,17 +939,19 @@ impl WindowOps for Window {
 	                64.0 // Fallback value
 	            } else {
 	                // 3. Get the frame (position and size) of the leftmost and rightmost buttons.
-	                let close_frame: NSRect = msg_send![close_button, frame];
 	                let zoom_frame: NSRect = msg_send![zoom_button, frame];
 
-	                // 4. The total width is the right edge of the rightmost button
-	                //    minus the left edge of the leftmost button.
-	                let right_edge = zoom_frame.origin.x + zoom_frame.size.width;
-	                let left_edge = close_frame.origin.x;
-	                let total_width = right_edge - left_edge;
+	                // 4. The total padding needed (in logical POINTS) is the coordinate
+            		// of the right edge of the rightmost button.
+	                let total_width_in_points = zoom_frame.origin.x + zoom_frame.size.width;
+	                
+	                // 5. Get the DPI scale factor (e.g., 2.0 for Retina)
+	                let scale_factor: CGFloat = msg_send![window_id, backingScaleFactor];
 
-	                // 5. Add a few extra pixels for padding between the buttons and the content.
-	                (total_width as f32) + 10.0
+	                // 6. Convert points to physical PIXELS
+	                let total_width_in_pixels = total_width_in_points * scale_factor;
+	                
+	                total_width_in_pixels
 	            }
 	        }
 	    } else {
