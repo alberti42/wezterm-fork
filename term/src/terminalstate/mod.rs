@@ -20,7 +20,7 @@ use wezterm_cell::UnicodeVersion;
 use wezterm_escape_parser::csi::{
     Cursor, CursorStyle, DecPrivateMode, DecPrivateModeCode, Device, Edit, EraseInDisplay,
     EraseInLine, Mode, Sgr, TabulationClear, TerminalMode, TerminalModeCode, Window, XtSmGraphics,
-    XtSmGraphicsAction, XtSmGraphicsItem, XtSmGraphicsStatus, XtermKeyModifierResource
+    XtSmGraphicsAction, XtSmGraphicsItem, XtSmGraphicsStatus, XtermKeyModifierResource,
 };
 use wezterm_escape_parser::{OneBased, OperatingSystemCommand, ShortDeviceControl, CSI};
 use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
@@ -1431,52 +1431,51 @@ impl TerminalState {
 
     fn perform_csi_mode(&mut self, mode: Mode) {
         match mode {
-			// --> START OF MODIFICATION <--
-	        Mode::SetDecPrivateMode(DecPrivateMode::Code(
-	            DecPrivateModeCode::StartBlinkingCursor,
-	        )) => {
-	            // An application is enabling blinking. Change the current shape to its
-	            // blinking variant.
-	            self.cursor.shape = match self.cursor.shape {
-	                CursorShape::SteadyBlock => CursorShape::BlinkingBlock,
-	                CursorShape::SteadyUnderline => CursorShape::BlinkingUnderline,
-	                CursorShape::SteadyBar => CursorShape::BlinkingBar,
-	                // If it's already blinking or default, do nothing
-	                _ => self.cursor.shape,
-	            };
-	        }
+            Mode::SetDecPrivateMode(DecPrivateMode::Code(
+                DecPrivateModeCode::StartBlinkingCursor,
+            )) => {
+                // An application is enabling blinking. Change the current shape to its
+                // blinking variant.
+                self.cursor.shape = match self.cursor.shape {
+                    CursorShape::SteadyBlock => CursorShape::BlinkingBlock,
+                    CursorShape::SteadyUnderline => CursorShape::BlinkingUnderline,
+                    CursorShape::SteadyBar => CursorShape::BlinkingBar,
+                    // If it's already blinking or default, do nothing
+                    _ => self.cursor.shape,
+                };
+            }
 
-	        Mode::ResetDecPrivateMode(DecPrivateMode::Code(
-	            DecPrivateModeCode::StartBlinkingCursor,
-	        )) => {
-	            // An application is disabling blinking. Change the current shape to its
-	            // steady variant.
-	            self.cursor.shape = match self.cursor.shape {
-	                CursorShape::BlinkingBlock | CursorShape::Default => CursorShape::SteadyBlock,
-	                CursorShape::BlinkingUnderline => CursorShape::SteadyUnderline,
-	                CursorShape::BlinkingBar => CursorShape::SteadyBar,
-	                // If it's already steady, do nothing
-	                _ => self.cursor.shape,
-	            };
-	        }
+            Mode::ResetDecPrivateMode(DecPrivateMode::Code(
+                DecPrivateModeCode::StartBlinkingCursor,
+            )) => {
+                // An application is disabling blinking. Change the current shape to its
+                // steady variant.
+                self.cursor.shape = match self.cursor.shape {
+                    CursorShape::BlinkingBlock | CursorShape::Default => CursorShape::SteadyBlock,
+                    CursorShape::BlinkingUnderline => CursorShape::SteadyUnderline,
+                    CursorShape::BlinkingBar => CursorShape::SteadyBar,
+                    // If it's already steady, do nothing
+                    _ => self.cursor.shape,
+                };
+            }
 
-	        Mode::QueryDecPrivateMode(DecPrivateMode::Code(
-	            DecPrivateModeCode::StartBlinkingCursor,
-	        )) => {
-	            // This part remains the same as our previous fix
-	            let shape = self.cursor.shape;
-	            // if shape == CursorShape::Default {
-                //     // Query the live configuration via the trait
+            Mode::QueryDecPrivateMode(DecPrivateMode::Code(
+                DecPrivateModeCode::StartBlinkingCursor,
+            )) => {
+                let shape = self.cursor.shape;
+                // Query the live configuration -- not implemented yet -- need some help
+                //
+                // if shape == CursorShape::Default {
+                //
                 //     shape = wezterm.config.default_cursor_style().into();
-                // }
-	            let is_blinking = matches!(
-	                shape,
-	                CursorShape::BlinkingBlock 
-	                | CursorShape::BlinkingUnderline 
-	                | CursorShape::BlinkingBar
-	            );
-	            self.decqrm_response(mode, true, is_blinking);
-	        }
+                let is_blinking = matches!(
+                    shape,
+                    CursorShape::BlinkingBlock
+                        | CursorShape::BlinkingUnderline
+                        | CursorShape::BlinkingBar
+                );
+                self.decqrm_response(mode, true, is_blinking);
+            }
 
             Mode::SetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::AutoRepeat))
             | Mode::ResetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::AutoRepeat)) => {
@@ -2631,6 +2630,13 @@ impl TerminalState {
     }
 
     fn perform_decrqss(&mut self, s: &Box<ShortDeviceControl>) {
+        // DECRQSS - Request Status String
+        // https://vt100.net/docs/vt510-rm/DECRQSS.html
+        // The response is described here:
+        // https://vt100.net/docs/vt510-rm/DECRPSS.html
+        // but note that *that* text has the validity value
+        // inverted; there's a note about this in the xterm
+        // ctlseqs docs.
         match s.data.as_slice() {
             &[b'"', b'p'] => {
                 // DECSCL - select conformance level
@@ -2639,23 +2645,22 @@ impl TerminalState {
             &[b' ', b'q'] => {
                 // DECSCUSR - cursor style query (xterm extension)
                 let shape = self.cursor.shape;
-
+                // Query the live configuration -- not implemented yet -- need some help
+                //
                 // if shape == CursorShape::Default {
-                //     // Query the live configuration via the trait
+                //
                 //     shape = wezterm.config.default_cursor_style().into();
                 // }
-                
-                // 1. Map the internal CursorShape to the standard CSI CursorStyle enum
-	            let style_code = match shape {
-	                CursorShape::BlinkingBlock => CursorStyle::BlinkingBlock,
-	                CursorShape::SteadyBlock => CursorStyle::SteadyBlock,
-	                CursorShape::BlinkingUnderline => CursorStyle::BlinkingUnderline,
-	                CursorShape::SteadyUnderline => CursorStyle::SteadyUnderline,
-	                CursorShape::BlinkingBar => CursorStyle::BlinkingBar,
-	                CursorShape::SteadyBar => CursorStyle::SteadyBar,
-	                CursorShape::Default => CursorStyle::Default,
-	            };
-
+                // Map the internal CursorShape to the standard CSI CursorStyle enum
+                let style_code = match shape {
+                    CursorShape::BlinkingBlock => CursorStyle::BlinkingBlock,
+                    CursorShape::SteadyBlock => CursorStyle::SteadyBlock,
+                    CursorShape::BlinkingUnderline => CursorStyle::BlinkingUnderline,
+                    CursorShape::SteadyUnderline => CursorStyle::SteadyUnderline,
+                    CursorShape::BlinkingBar => CursorStyle::BlinkingBar,
+                    CursorShape::SteadyBar => CursorStyle::SteadyBar,
+                    CursorShape::Default => CursorStyle::Default,
+                };
                 write!(self.writer, "{}1$r{} q{}", DCS, style_code as u16, ST).ok();
             }
             &[b'r'] => {
@@ -2668,7 +2673,8 @@ impl TerminalState {
                     margins.start + 1,
                     margins.end,
                     ST
-                ).ok();
+                )
+                .ok();
             }
             &[b's'] => {
                 // DECSLRM - left and right margins
@@ -2680,7 +2686,8 @@ impl TerminalState {
                     margins.start + 1,
                     margins.end,
                     ST
-                ).ok();
+                )
+                .ok();
             }
             _ => {
                 if self.config.log_unknown_escape_sequences() {

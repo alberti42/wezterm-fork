@@ -289,22 +289,28 @@ impl<'a> Performer<'a> {
 
     fn device_control(&mut self, ctrl: DeviceControlMode) {
         self.pop_tmux_title_state();
-          match &ctrl {
-	        DeviceControlMode::ShortDeviceControl(s) => {
-	            match (s.byte, s.intermediates.as_slice()) {
-	                (b'q', &[b'$']) => {
-	                    // This is now clean and consistent with the rest of the code
-	                    self.state.perform_decrqss(s);
-	                }
-	                _ => {
-	                    if self.config.log_unknown_escape_sequences() {
-	                        log::warn!("unhandled {:?}", s);
-	                    }
-	                }
-	            }
-	        }
-	        _ => { /* ... existing logic ... */ }
-	    }
+        match &ctrl {
+            DeviceControlMode::ShortDeviceControl(s) => {
+                match (s.byte, s.intermediates.as_slice()) {
+                    (b'q', &[b'$']) => {
+                        self.state.perform_decrqss(s);
+                    }
+                    _ => {
+                        if self.config.log_unknown_escape_sequences() {
+                            log::warn!("unhandled {:?}", s);
+                        }
+                    }
+                }
+            }
+            _ => match self.device_control_handler.as_mut() {
+                Some(handler) => handler.handle_device_control(ctrl),
+                None => {
+                    if self.config.log_unknown_escape_sequences() {
+                        log::warn!("unhandled {:?}", ctrl);
+                    }
+                }
+            },
+        }
     }
 
     /// Draw a character to the screen
